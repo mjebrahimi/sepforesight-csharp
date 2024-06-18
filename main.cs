@@ -32,7 +32,7 @@ public class Program
             {
                 var item = await inChannel.Reader.ReadAsync();
                 var result = f(item);
-                outChannel.Writer.WriteAsync(result);
+                await outChannel.Writer.WriteAsync(result);
 
             }
         }
