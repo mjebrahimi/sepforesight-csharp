@@ -22,24 +22,33 @@ public class Program
 
     static async Task RunnerAsync(List<int> primes, int workers, Func<int, int> func)
     {
-        Log("Starting");
         var inChannel = Channel.CreateBounded<int>(1);
         var outChannel = Channel.CreateBounded<int>(1);
 
-        async Task Run()
+        using var countDownEvent = new CountdownEvent(workers);
+
+        async Task Run(int num)
         {
+            Log($"Worker {num} started");
+
             //Keep reading until the inChannel is completed.
             await foreach (var item in inChannel.Reader.ReadAllAsync())
             {
                 var result = func(item);
                 await outChannel.Writer.WriteAsync(result);
+
             }
 
-            outChannel.Writer.Complete();
-            Log("The outChannel Completed.");
+            //Signal that I'm done and wait for other Workers to be done.
+            countDownEvent.Signal();
+            Log($"Worker {num} is done and waits for others to be done.");
+            countDownEvent.Wait();
+
+            if (outChannel.Writer.TryComplete())
+                Log("The outChannel Completed.");
         }
 
-        _ = Enumerable.Range(0, workers).Select(_ => Run()).ToArray();
+        _ = Enumerable.Range(1, workers).Select(Run).ToArray();
 
         var readFromOutTask = Task.Run(async () =>
         {
@@ -52,8 +61,6 @@ public class Program
             }
 
             Log("Result: " + string.Join(", ", results));
-
-
         });
 
         foreach (var prime in primes)
