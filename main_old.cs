@@ -1,8 +1,7 @@
-using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Threading.Channels;
 
-public class Program
+public class Program_old
 {
     static int TID => Thread.CurrentThread.ManagedThreadId;
 
@@ -13,55 +12,44 @@ public class Program
 
     static async Task Main(string[] args)
     {
-        var stopWatch = Stopwatch.StartNew();
-
         Log("Starting");
 
-        List<int> primes = [5, 4, 3, 2, 1, 2, 3, 4, 5];
-        await RunnerAsync(primes, Fib);
+        List<int> primes = [2, 3, 5, 7, 11, 7, 5, 9];
+        await RunnerAsync(primes, 5, Fib);
 
         Log("Done");
-
-        stopWatch.Stop();
-
-        Log($"Elapsed: {stopWatch.ElapsedMilliseconds}ms");
     }
 
-    static async Task RunnerAsync(List<int> primes, Func<int, int> func)
+    static async Task RunnerAsync(List<int> primes, int workers, Func<int, int> func)
     {
         var inChannel = Channel.CreateBounded<int>(1);
-        var taskChannel = Channel.CreateUnbounded<Task<int>>();
         var outChannel = Channel.CreateBounded<int>(1);
 
-        async Task ReadFromInChannelAndWriteToTaskChannel()
+        using var countDownEvent = new CountdownEvent(workers);
+
+        async Task Run(int num)
         {
+            Log($"Worker {num} started");
+
             //Keep reading until the inChannel is completed.
             await foreach (var item in inChannel.Reader.ReadAllAsync())
             {
-                var task = Task.Run(() => func(item));
-                await taskChannel.Writer.WriteAsync(task);
-            }
-
-            taskChannel.Writer.Complete();
-            Log("The taskChannel Completed.");
-        }
-        _ = Task.Run(ReadFromInChannelAndWriteToTaskChannel);
-
-        async Task ReadFromTaskChannelAndWriteToOutChannel()
-        {
-            //Keep reading until the taskChannel is completed.
-            await foreach (var task in taskChannel.Reader.ReadAllAsync())
-            {
-                var result = await task;
+                var result = func(item);
                 await outChannel.Writer.WriteAsync(result);
             }
 
-            outChannel.Writer.Complete();
-            Log("The outChannel Completed.");
-        }
-        _ = Task.Run(ReadFromTaskChannelAndWriteToOutChannel);
+            //Signal that I'm done and wait for other Workers to be done.
+            countDownEvent.Signal();
+            Log($"Worker {num} is done and waits for others to be done.");
+            countDownEvent.Wait();
 
-        var readFromOutChannelTask = Task.Run(async () =>
+            if (outChannel.Writer.TryComplete())
+                Log("The outChannel Completed.");
+        }
+
+        _ = Enumerable.Range(1, workers).Select(Run).ToArray();
+
+        var readFromOutTask = Task.Run(async () =>
         {
             var results = new List<int>();
 
@@ -84,17 +72,14 @@ public class Program
         Log("The inChannel Completed.");
 
         //Make sure not to return before the readFromOutTask is completed.
-        await readFromOutChannelTask;
+        await readFromOutTask;
     }
 
     // Fibunachi
     static int Fib(int n)
     {
-        Thread.Sleep(n * 1000);
-        return n;
-
-        //if (n == 0) return 1;
-        //if (n == 1) return 1;
-        //return Fib(n - 1) + Fib(n - 2);
+        if (n == 0) return 1;
+        if (n == 1) return 1;
+        return Fib(n - 1) + Fib(n - 2);
     }
 }
